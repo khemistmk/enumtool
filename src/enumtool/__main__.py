@@ -13,11 +13,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="EnumTool - domain enumeration and fingerprinting")
     p.add_argument("domain", help="Target domain, e.g. example.com")
     p.add_argument("-o", "--outdir", type=Path, help="Output directory (default: reports/<domain>-<timestamp>)")
-    p.add_argument("--ports", choices=["web", "top100", "full-small"], help="Port preset")
-    p.add_argument("--ports-list", help="Explicit comma-separated ports (overrides preset)")
+    p.add_argument("--ports", choices=["web", "top100", "full-small"], help="Port preset (used only with --active)")
+    p.add_argument("--ports-list", help="Explicit comma-separated ports (overrides preset; used only with --active)")
     p.add_argument("--wordlist", type=Path, help="Subdomain wordlist path")
     p.add_argument("--max-workers", type=int, default=200, help="Concurrency level (default: 200)")
     p.add_argument("--timeout", type=float, default=5.0, help="Timeout seconds (default: 5)")
+    p.add_argument("--active", action="store_true", help="Enable active probing (TCP connect/HTTP). Default is passive OSINT only.")
     p.add_argument("--no-json", action="store_true", help="Do not write JSON output")
     return p.parse_args()
 
@@ -35,6 +36,7 @@ def main() -> None:
         concurrency=args.max_workers,
         timeout=args.timeout,
         write_json=not args.no_json,
+        active=args.active,
     )
     console.print(f"Report written to: [green]{report}[/]")
 

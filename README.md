@@ -1,14 +1,14 @@
 # EnumTool
 
-A fast, concurrent domain enumerator and service fingerprinting tool. It analyzes a target domain, discovers subdomains, resolves DNS records, fetches WHOIS, scans common ports, fingerprints HTTP services, infers technologies, and outputs a well-formatted HTML report (plus JSON).
+A fast, concurrent domain enumerator and service fingerprinting tool. It analyzes a target domain, discovers subdomains, resolves DNS records, fetches WHOIS, gathers OSINT about subdomains, ports, and technologies from public sources (crt.sh, ThreatCrowd, Shodan) by default (no active probing), and optionally performs active probing when enabled, producing a clean HTML report (plus JSON).
 
 ## Features
 
 - Subdomain discovery: DNS records, wordlist brute-force, and passive hints from TXT/MX/NS/CNAME.
 - DNS resolution: A/AAAA/CNAME/TXT/MX/NS/SRV with fallback resolvers.
 - WHOIS summary: Registrar, creation/expiry, name servers.
-- Port scan (selected ports): TCP connect scan with timeouts.
-- HTTP fingerprinting: Status, title, server headers, TLS, favicon hash, tech hints.
+- Passive OSINT: crt.sh (CT logs), ThreatCrowd, Shodan (subdomains, observed open ports, tech hints).
+- Optional active probing: TCP connect and HTTP fetch can be enabled with `--active`.
 - Technology inference: Map headers/paths/content to frameworks and products.
 - Output: Clean HTML report and machine-readable JSON.
 - Concurrency: Async for network I/O with configurable limits.
@@ -27,11 +27,19 @@ python -m enumtool <domain> [options]
 
 Key options:
 - `-o, --outdir` Output directory (default `reports/<domain>-<timestamp>`)
-- `--ports` Comma list or preset: `top100`, `web`, `full-small`
+- OSINT-only by default (no active probing)
+- `--active` Enable TCP/HTTP probing (optional)
+- `--ports` Comma list or preset: `top100`, `web`, `full-small` (used only with --active)
 - `--wordlist` Subdomain wordlist path (defaults to bundled list)
+- (Optional) `--wordlist` to provide a list for DNS brute-force (can be noisy)
 - `--max-workers` Concurrency level (default 200)
 - `--timeout` Socket/HTTP timeout seconds (default 5)
 - `--json` Also write JSON result
+
+## API keys and environment
+- Create a `.env` file (not committed) in the project root. Copy from `.env.example`.
+- Supported variables:
+	- `SHODAN_API_KEY=...`
 
 ## Notes
 - Use responsibly and only against domains you have permission to test.
