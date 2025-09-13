@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-workers", type=int, default=200, help="Concurrency level (default: 200)")
     p.add_argument("--timeout", type=float, default=5.0, help="Timeout seconds (default: 5)")
     p.add_argument("--active", action="store_true", help="Enable active probing (TCP connect/HTTP). Default is passive OSINT only.")
+    p.add_argument("--anon", action="store_true", help="Route requests via Tor (SOCKS5 127.0.0.1:9050) and use DoH; disables WHOIS and active probing.")
     p.add_argument("--no-json", action="store_true", help="Do not write JSON output")
     return p.parse_args()
 
@@ -34,7 +35,10 @@ def main() -> None:
  |___|_||_\_,_|_|_|_|_|\___/\___/_|
  """
     console.print(banner, style="cyan")
-    mode = "ACTIVE" if args.active else "PASSIVE"
+    if args.anon and args.active:
+        console.print("[yellow]--anon enabled: disabling --active (active probing is not supported over Tor).[/]")
+        args.active = False
+    mode = "ANON" if args.anon else ("ACTIVE" if args.active else "PASSIVE")
     console.print(f"[bold]EnumTool[/] starting {mode} scan for [yellow]{args.domain}[/]\n")
 
     def progress(msg: str) -> None:
@@ -49,8 +53,9 @@ def main() -> None:
         timeout=args.timeout,
         write_json=not args.no_json,
         active=args.active,
-        bruteforce=args.bruteforce,
-        progress=progress,
+    bruteforce=args.bruteforce,
+    progress=progress,
+    anon=args.anon,
     )
     console.print(f"Report written to: [green]{report}[/]")
 

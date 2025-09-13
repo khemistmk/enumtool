@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Iterable, List, Set
+from typing import Iterable, List, Set, Optional, TYPE_CHECKING
 
-from .dns_utils import enumerate_dns
+from .dns_utils import enumerate_dns, enumerate_dns_doh
+if TYPE_CHECKING:
+    import httpx
 
 
-async def _exists(name: str) -> bool:
-    a, aaaa, cname, *_ = await enumerate_dns(name)
+async def _exists(name: str, *, anon: bool = False, client: Optional["httpx.AsyncClient"] = None) -> bool:
+    if anon:
+        a, aaaa, cname, *_ = await enumerate_dns_doh(name, client)
+    else:
+        a, aaaa, cname, *_ = await enumerate_dns(name)
     return bool(a or aaaa or cname)
 
 
@@ -62,7 +67,7 @@ def _expand_to_top_1000(base_words: List[str]) -> List[str]:
     return out[:1000]
 
 
-async def brute_subdomains(domain: str, wordlist_path: Path, concurrency: int = 200) -> List[str]:
+async def brute_subdomains(domain: str, wordlist_path: Path, concurrency: int = 200, *, anon: bool = False, client: Optional["httpx.AsyncClient"] = None) -> List[str]:
     words: List[str] = []
     try:
         with wordlist_path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -82,16 +87,19 @@ async def brute_subdomains(domain: str, wordlist_path: Path, concurrency: int = 
     async def worker(sub: str):
         fqdn = f"{sub}.{domain}".strip()
         async with sem:
-            if await _exists(fqdn):
+            if await _exists(fqdn, anon=anon, client=client):
                 results.append(fqdn)
 
     await asyncio.gather(*(worker(w) for w in words))
     return sorted(set(results))
 
 
-async def passive_hints(domain: str) -> List[str]:
+async def passive_hints(domain: str, *, anon: bool = False, client: Optional["httpx.AsyncClient"] = None) -> List[str]:
     # Scan DNS TXT/MX/NS/CNAME for host-like strings
-    _, _, cname, txt, mx, ns, _ = await enumerate_dns(domain)
+    if anon:
+        _, _, cname, txt, mx, ns, _ = await enumerate_dns_doh(domain, client)
+    else:
+        _, _, cname, txt, mx, ns, _ = await enumerate_dns(domain)
     hints: Set[str] = set()
     candidates = []
     candidates += [r.split()[-1].strip(".") for r in mx]

@@ -13,12 +13,21 @@ A fast, concurrent domain enumerator and service fingerprinting tool. It analyze
 - Output: Clean HTML report and machine-readable JSON.
 - Concurrency: Async for network I/O with configurable limits.
 - Friendly CLI: ASCII banner and stepwise progress logs during scanning and report generation.
+ - Anonymous mode: `--anon` routes HTTP via Tor (SOCKS5 127.0.0.1:9050) and uses DNS-over-HTTPS; disables WHOIS and active probing.
 
 ## Quick start
 
-1) Create and activate a virtual environment, then install dependencies.
+1) Windows setup (installs Tor and deps):
+	- Run scripts/setup.ps1 in an elevated PowerShell to install Tor Browser via winget, set TOR_EXE, create .venv, and install deps.
+	- Open a new terminal to pick up TOR_EXE.
 
-2) Run a scan and open the generated report.
+2) Linux/macOS setup:
+	- Run scripts/setup.sh (requires sudo for package managers/brew). It installs Tor, sets TOR_EXE in your shell profile, creates .venv, and installs deps.
+
+3) Manual setup:
+	- Create and activate a virtual environment, then install dependencies from requirements.txt and pip install -e .
+
+4) Run a scan and open the generated report.
 
 ## Usage
 
@@ -36,6 +45,8 @@ Key options:
 - `--max-workers` Concurrency level (default 200)
 - `--timeout` Socket/HTTP timeout seconds (default 5)
 - `--no-json` Skip writing JSON result (HTML is always written)
+ - `--anon` Run via Tor + DoH (requires Tor running locally on 9050). Disables WHOIS and `--active`.
+	- On Windows, `scripts/setup.ps1` installs Tor Browser and sets TOR_EXE so the tool can launch Tor automatically.
 
 ## API keys and environment
 - Create a `.env` file (not committed) in the project root. Copy from `.env.example`.
@@ -44,6 +55,7 @@ Key options:
 
 ## Notes
 - Use responsibly and only against domains you have permission to test.
+ - Anonymous mode requires a local Tor SOCKS proxy on 127.0.0.1:9050 (e.g., Tor Browser). Active probing is disabled in anon mode.
 
 ## License
 MIT

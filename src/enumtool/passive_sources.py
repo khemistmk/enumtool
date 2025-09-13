@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import List, Set, Tuple
+from typing import List, Set, Tuple, Optional
 from urllib.parse import quote_plus
 
 import httpx
@@ -9,45 +9,57 @@ import httpx
 from .config import get_api_key, load_env
 
 
-async def from_crtsh(domain: str) -> List[str]:
+async def from_crtsh(domain: str, client: Optional[httpx.AsyncClient] = None) -> List[str]:
     # Public, no key required
     url = f"https://crt.sh/?q=%25.{domain}&output=json"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url)
-            if r.status_code != 200:
-                return []
-            # Some entries may be concatenated JSON objects; handle leniency
-            try:
-                data = r.json()
-            except json.JSONDecodeError:
-                # Fallback: parse line-by-line
-                data = json.loads("[" + r.text.replace("}\n{", "},{") + "]")
-            names: Set[str] = set()
-            for item in data:
-                name_value = item.get("name_value") or ""
-                for raw in name_value.split("\n"):
-                    fqdn = raw.strip().lower()
-                    if fqdn.endswith(domain):
-                        names.add(fqdn)
-            return sorted(names)
+        close = False
+        if client is None:
+            client = httpx.AsyncClient(timeout=10.0)
+            close = True
+        r = await client.get(url)
+        if r.status_code != 200:
+            return []
+        # Some entries may be concatenated JSON objects; handle leniency
+        try:
+            data = r.json()
+        except json.JSONDecodeError:
+            # Fallback: parse line-by-line
+            data = json.loads("[" + r.text.replace("}\n{", "},{") + "]")
+        names: Set[str] = set()
+        for item in data:
+            name_value = item.get("name_value") or ""
+            for raw in name_value.split("\n"):
+                fqdn = raw.strip().lower()
+                if fqdn.endswith(domain):
+                    names.add(fqdn)
+        return sorted(names)
     except Exception:
         return []
+    finally:
+        if 'close' in locals() and close:
+            await client.aclose()
 
 
-async def from_threatcrowd(domain: str) -> List[str]:
+async def from_threatcrowd(domain: str, client: Optional[httpx.AsyncClient] = None) -> List[str]:
     url = f"https://www.threatcrowd.org/searchApi/v2/domain/report/?domain={domain}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url)
-            if r.status_code != 200:
-                return []
-            data = r.json()
-            subs = data.get("subdomains") or []
-            out = [s.strip().lower() for s in subs if isinstance(s, str) and s.endswith(domain)]
-            return sorted(set(out))
+        close = False
+        if client is None:
+            client = httpx.AsyncClient(timeout=10.0)
+            close = True
+        r = await client.get(url)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        subs = data.get("subdomains") or []
+        out = [s.strip().lower() for s in subs if isinstance(s, str) and s.endswith(domain)]
+        return sorted(set(out))
     except Exception:
         return []
+    finally:
+        if 'close' in locals() and close:
+            await client.aclose()
 
 
 async def from_shodan(domain: str) -> Tuple[List[str], List[Tuple[str, int, List[str]]]]:

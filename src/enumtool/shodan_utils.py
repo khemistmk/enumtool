@@ -9,8 +9,9 @@ SHODAN_API_BASE = "https://api.shodan.io"
 
 
 class ShodanClient:
-    def __init__(self, api_key: Optional[str]):
+    def __init__(self, api_key: Optional[str], proxies: Optional[dict] = None):
         self.api_key = api_key
+        self._proxies = proxies
 
     def enabled(self) -> bool:
         return bool(self.api_key)
@@ -23,11 +24,11 @@ class ShodanClient:
         if params:
             qp.update(params)
         try:
-            r = requests.get(url, params=qp, timeout=10)
+            r = requests.get(url, params=qp, timeout=10, proxies=self._proxies)
             if r.status_code == 429:
                 # Simple one-shot backoff
                 time.sleep(1)
-                r = requests.get(url, params=qp, timeout=10)
+                r = requests.get(url, params=qp, timeout=10, proxies=self._proxies)
             if r.ok:
                 return r.json()
         except Exception:

@@ -5,9 +5,11 @@ import json
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    import httpx
 
-from .dns_utils import enumerate_dns
+from .dns_utils import enumerate_dns, enumerate_dns_doh
 from .models import DNSRecords, HTTPInfo, PortInfo, ScanResult, SubdomainFinding, WhoisInfo
 from .report import render_report, write_report
 from .subdomains import brute_subdomains, passive_hints
@@ -16,6 +18,7 @@ from .config import get_settings
 from .shodan_utils import ShodanClient
 from .passive_sources import from_crtsh, from_threatcrowd
 from .ports import DEFAULT_PORTS  # presets used only when active scan is enabled
+from .tor_utils import TorManager
 
 
 def _choose_ports(preset: Optional[str], explicit: Optional[str]) -> List[int]:
@@ -33,10 +36,13 @@ def _choose_ports(preset: Optional[str], explicit: Optional[str]) -> List[int]:
     return sorted(set(DEFAULT_PORTS))
 
 
-async def _resolve_all(names: Iterable[str]) -> List[SubdomainFinding]:
+async def _resolve_all(names: Iterable[str], *, anon: bool = False, client: Optional["httpx.AsyncClient"] = None) -> List[SubdomainFinding]:
     results: List[SubdomainFinding] = []
     for name in names:
-        a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns(name)
+        if anon:
+            a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns_doh(name, client)
+        else:
+            a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns(name)
         ips = a + aaaa
         rec = DNSRecords(a=a, aaaa=aaaa, cname=cname, txt=txt, mx=mx, ns=ns, srv=srv)
         results.append(SubdomainFinding(name=name, ips=ips, dns=rec))
@@ -74,12 +80,15 @@ async def _enrich_with_shodan(f: SubdomainFinding, shodan: ShodanClient) -> None
                     )
 
 
-async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports_list: Optional[str], wordlist: Path, bruteforce: bool, concurrency: int, timeout: float, active_scan: bool, progress: Optional[Callable[[str], None]] = None) -> ScanResult:
+async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports_list: Optional[str], wordlist: Path, bruteforce: bool, concurrency: int, timeout: float, active_scan: bool, progress: Optional[Callable[[str], None]] = None, anon: bool = False) -> ScanResult:
     if progress:
         progress("Fetching WHOIS and apex DNS records…")
     # WHOIS and apex DNS
-    who = fetch_whois(domain)
-    a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns(domain)
+    who = {} if anon else fetch_whois(domain)
+    if anon:
+        a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns_doh(domain)
+    else:
+        a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns(domain)
     apex_records = DNSRecords(a=a, aaaa=aaaa, cname=cname, txt=txt, mx=mx, ns=ns, srv=srv)
     whois_info = WhoisInfo(
         registrar=who.get("registrar"),
@@ -90,16 +99,40 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
 
     # OSINT clients
     settings = get_settings()
-    shodan = ShodanClient(settings.shodan_api_key)
+    tor: Optional[TorManager] = None
+    socks_url = None
+    if anon:
+        tor = TorManager()
+        try:
+            host, port = tor.start(progress)
+            socks_url = f"socks5://{host}:{port}"
+        except Exception as e:
+            if progress:
+                progress(f"[warning] Could not start Tor: {e}")
+            # Continue without Tor
+            anon = False
+    shodan = ShodanClient(settings.shodan_api_key, proxies={"http": socks_url, "https": socks_url} if socks_url else None)
 
     # Subdomains via DNS hints, crt.sh, ThreatCrowd, and Shodan
     if progress:
         progress("Gathering passive subdomain hints (DNS TXT/MX/NS/CNAME)…")
-    hints = await passive_hints(domain)
-    if progress:
-        progress("Querying crt.sh and ThreatCrowd for CT and community data…")
-    crt = await from_crtsh(domain)
-    tc = await from_threatcrowd(domain)
+    # Shared HTTP client (optionally over Tor)
+    http_client = None
+    try:
+        if socks_url:
+            import httpx
+            proxies = {"http://": socks_url, "https://": socks_url}
+            http_client = httpx.AsyncClient(timeout=10.0, proxies=proxies)
+        hints = await passive_hints(domain, anon=anon, client=http_client)  # DNS hints respect anon mode
+        if progress:
+            progress("Querying crt.sh and ThreatCrowd for CT and community data…")
+        crt = await from_crtsh(domain, client=http_client) if http_client else await from_crtsh(domain)
+        tc = await from_threatcrowd(domain, client=http_client) if http_client else await from_threatcrowd(domain)
+    finally:
+        if http_client:
+            await http_client.aclose()
+        if tor:
+            tor.stop()
     shodan_subs, shodan_records = ([], {})
     if shodan.enabled():
         if progress:
@@ -112,11 +145,15 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
     if bruteforce:
         if progress:
             progress("Running DNS bruteforce (~1000 common names)…")
-        brute = await brute_subdomains(domain, wordlist, concurrency=concurrency)
+        brute = await brute_subdomains(domain, wordlist, concurrency=concurrency, anon=anon, client=http_client)
+    crt = crt or []
+    tc = tc or []
+    shodan_subs = shodan_subs or []
+    brute = brute or []
     names = sorted(set(hints + crt + tc + shodan_subs + brute + [domain]))
     if progress:
         progress(f"Resolving {len(names)} names to collect DNS records and IPs…")
-    subfindings = await _resolve_all(names)
+    subfindings = await _resolve_all(names, anon=anon, client=http_client)
 
     # Enrich with OSINT (Shodan). No active host probing unless explicitly enabled.
     if progress:
@@ -124,7 +161,7 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
     await asyncio.gather(*(_enrich_with_shodan(sf, shodan) for sf in subfindings))
 
     # Optionally perform active scan if enabled by user flag
-    if active_scan:
+    if active_scan and not anon:
         if progress:
             progress("Active scan enabled: probing TCP ports and HTTP services…")
         from .ports import scan_ports  # lazy import to avoid accidental usage otherwise
@@ -161,7 +198,8 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
                         tech=[t.strip() for t in (data.get("tech") or "").split(",") if t.strip()],
                     )
             await asyncio.gather(*(do_fp(p, ssl) for p, ssl in targets))
-        # Run active tasks for all subdomains
+    # Run active tasks for all subdomains (only when active_scan)
+    if active_scan and not anon:
         await asyncio.gather(*(_active(sf) for sf in subfindings))
 
     return ScanResult(domain=domain, whois=whois_info, records=apex_records, subdomains=subfindings)
@@ -179,6 +217,7 @@ def scan_domain(
     write_json: bool = True,
     active: bool = False,
     progress: Optional[Callable[[str], None]] = None,
+    anon: bool = False,
 ) -> Path:
     outdir = outdir or Path("reports") / f"{domain}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
     project_root = Path(__file__).resolve().parents[2]
@@ -192,7 +231,7 @@ def scan_domain(
             with pkg_resources.as_file(pkg_resources.files("enumtool.resources") / "subdomains-top.txt") as p:
                 wordlist = Path(str(p))
 
-    result = asyncio.run(run_scan(domain, outdir, ports, ports_list, wordlist, bruteforce, concurrency, timeout, active, progress))
+    result = asyncio.run(run_scan(domain, outdir, ports, ports_list, wordlist, bruteforce, concurrency, timeout, active, progress, anon))
     # Render HTML
     if progress:
         progress("Rendering HTML report…")
