@@ -5,11 +5,18 @@ from pathlib import Path
 from typing import Any, Dict
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+import importlib.resources as pkg_resources
 
 
-def render_report(template_dir: Path, context: Dict[str, Any]) -> str:
+def render_report(template_dir: Path | None, context: Dict[str, Any]) -> str:
+    if template_dir and (template_dir / "report.html.j2").exists():
+        loader = FileSystemLoader(str(template_dir))
+    else:
+        # Fallback to packaged resource
+        with pkg_resources.as_file(pkg_resources.files("enumtool.resources")) as p:
+            loader = FileSystemLoader(str(p))
     env = Environment(
-        loader=FileSystemLoader(str(template_dir)),
+        loader=loader,
         autoescape=select_autoescape(["html", "xml"]),
         trim_blocks=True,
         lstrip_blocks=True,

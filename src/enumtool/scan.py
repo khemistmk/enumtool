@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional
 
 from .dns_utils import enumerate_dns
 from .models import DNSRecords, HTTPInfo, PortInfo, ScanResult, SubdomainFinding, WhoisInfo
@@ -74,7 +74,9 @@ async def _enrich_with_shodan(f: SubdomainFinding, shodan: ShodanClient) -> None
                     )
 
 
-async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports_list: Optional[str], wordlist: Path, concurrency: int, timeout: float, active_scan: bool) -> ScanResult:
+async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports_list: Optional[str], wordlist: Path, bruteforce: bool, concurrency: int, timeout: float, active_scan: bool, progress: Optional[Callable[[str], None]] = None) -> ScanResult:
+    if progress:
+        progress("Fetching WHOIS and apex DNS records…")
     # WHOIS and apex DNS
     who = fetch_whois(domain)
     a, aaaa, cname, txt, mx, ns, srv = await enumerate_dns(domain)
@@ -91,23 +93,40 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
     shodan = ShodanClient(settings.shodan_api_key)
 
     # Subdomains via DNS hints, crt.sh, ThreatCrowd, and Shodan
+    if progress:
+        progress("Gathering passive subdomain hints (DNS TXT/MX/NS/CNAME)…")
     hints = await passive_hints(domain)
+    if progress:
+        progress("Querying crt.sh and ThreatCrowd for CT and community data…")
     crt = await from_crtsh(domain)
     tc = await from_threatcrowd(domain)
     shodan_subs, shodan_records = ([], {})
     if shodan.enabled():
+        if progress:
+            progress("Pulling Shodan domain data (subdomains & DNS records)…")
         try:
             shodan_subs, shodan_records = shodan.domain_info(domain)
         except Exception:
             shodan_subs, shodan_records = ([], {})
-    names = sorted(set(hints + crt + tc + shodan_subs + [domain]))
+    brute: List[str] = []
+    if bruteforce:
+        if progress:
+            progress("Running DNS bruteforce (~1000 common names)…")
+        brute = await brute_subdomains(domain, wordlist, concurrency=concurrency)
+    names = sorted(set(hints + crt + tc + shodan_subs + brute + [domain]))
+    if progress:
+        progress(f"Resolving {len(names)} names to collect DNS records and IPs…")
     subfindings = await _resolve_all(names)
 
     # Enrich with OSINT (Shodan). No active host probing unless explicitly enabled.
+    if progress:
+        progress("Enriching with Shodan host data (ports/tech) for resolved IPs…")
     await asyncio.gather(*(_enrich_with_shodan(sf, shodan) for sf in subfindings))
 
     # Optionally perform active scan if enabled by user flag
     if active_scan:
+        if progress:
+            progress("Active scan enabled: probing TCP ports and HTTP services…")
         from .ports import scan_ports  # lazy import to avoid accidental usage otherwise
         from .http_fingerprint import fingerprint_http  # lazy import
         chosen_ports = _choose_ports(ports_preset, ports_list)
@@ -142,6 +161,7 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
                         tech=[t.strip() for t in (data.get("tech") or "").split(",") if t.strip()],
                     )
             await asyncio.gather(*(do_fp(p, ssl) for p, ssl in targets))
+        # Run active tasks for all subdomains
         await asyncio.gather(*(_active(sf) for sf in subfindings))
 
     return ScanResult(domain=domain, whois=whois_info, records=apex_records, subdomains=subfindings)
@@ -153,22 +173,35 @@ def scan_domain(
     ports: Optional[str] = None,
     ports_list: Optional[str] = None,
     wordlist: Optional[Path] = None,
+    bruteforce: bool = False,
     concurrency: int = 200,
     timeout: float = 5.0,
     write_json: bool = True,
     active: bool = False,
+    progress: Optional[Callable[[str], None]] = None,
 ) -> Path:
     outdir = outdir or Path("reports") / f"{domain}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
     project_root = Path(__file__).resolve().parents[2]
     tmpl_dir = project_root / "templates"
-    wordlist = wordlist or (project_root / "data" / "subdomains-top.txt")
+    # Prefer user-specified or repo data; otherwise fall back to packaged wordlist
+    if wordlist is None:
+        candidate = project_root / "data" / "subdomains-top.txt"
+        wordlist = candidate if candidate.exists() else Path(__file__)  # dummy for typing
+        if not candidate.exists():
+            import importlib.resources as pkg_resources
+            with pkg_resources.as_file(pkg_resources.files("enumtool.resources") / "subdomains-top.txt") as p:
+                wordlist = Path(str(p))
 
-    result = asyncio.run(run_scan(domain, outdir, ports, ports_list, wordlist, concurrency, timeout, active))
+    result = asyncio.run(run_scan(domain, outdir, ports, ports_list, wordlist, bruteforce, concurrency, timeout, active, progress))
     # Render HTML
+    if progress:
+        progress("Rendering HTML report…")
     html = render_report(tmpl_dir, {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "result": result,
     })
+    if progress:
+        progress("Writing report files (HTML/JSON)…")
     path = write_report(outdir, html)
 
     if write_json:

@@ -12,6 +12,7 @@ A fast, concurrent domain enumerator and service fingerprinting tool. It analyze
 - Technology inference: Map headers/paths/content to frameworks and products.
 - Output: Clean HTML report and machine-readable JSON.
 - Concurrency: Async for network I/O with configurable limits.
+- Friendly CLI: ASCII banner and stepwise progress logs during scanning and report generation.
 
 ## Quick start
 
@@ -31,10 +32,10 @@ Key options:
 - `--active` Enable TCP/HTTP probing (optional)
 - `--ports` Comma list or preset: `top100`, `web`, `full-small` (used only with --active)
 - `--wordlist` Subdomain wordlist path (defaults to bundled list)
-- (Optional) `--wordlist` to provide a list for DNS brute-force (can be noisy)
+- `--bruteforce` Enable fast DNS brute-force (~1000 common names) in addition to passive sources
 - `--max-workers` Concurrency level (default 200)
 - `--timeout` Socket/HTTP timeout seconds (default 5)
-- `--json` Also write JSON result
+- `--no-json` Skip writing JSON result (HTML is always written)
 
 ## API keys and environment
 - Create a `.env` file (not committed) in the project root. Copy from `.env.example`.

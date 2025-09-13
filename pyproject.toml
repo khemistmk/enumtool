@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "enumtool"
-version = "0.1.0"
+version = "1.0.0"
 description = "Domain enumeration and service fingerprinting with HTML reports"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Security Researcher" }]
+authors = [{ name = "Timothy Wilson" }]
 dependencies = []
 
 [tool.setuptools]
@@ -17,3 +17,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"enumtool.resources" = ["*.j2", "*.txt"]
