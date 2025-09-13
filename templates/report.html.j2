@@ -64,9 +64,14 @@
             <td class="mono">{{ s.name }}</td>
             <td class="mono">{{ s.ips|join(', ') }}</td>
             <td class="mono">
-              {% for p in s.ports %}
-                <span class="tag">{{ p.port }} {{ 'open' if p.open else 'closed' }}</span>
-              {% endfor %}
+              {% set open_ports = s.ports | selectattr('open') | list %}
+              {% if open_ports %}
+                {% for p in open_ports %}
+                  <span class="tag">{{ p.port }} open</span>
+                {% endfor %}
+              {% else %}
+                <span class="small">none</span>
+              {% endif %}
             </td>
             <td>
               {% for key, h in s.http.items() %}
