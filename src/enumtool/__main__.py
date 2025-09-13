@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from rich.console import Console
+from rich.table import Table
+
+from .scan import scan_domain
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="EnumTool - domain enumeration and fingerprinting")
+    p.add_argument("domain", help="Target domain, e.g. example.com")
+    p.add_argument("-o", "--outdir", type=Path, help="Output directory (default: reports/<domain>-<timestamp>)")
+    p.add_argument("--ports", choices=["web", "top100", "full-small"], help="Port preset")
+    p.add_argument("--ports-list", help="Explicit comma-separated ports (overrides preset)")
+    p.add_argument("--wordlist", type=Path, help="Subdomain wordlist path")
+    p.add_argument("--max-workers", type=int, default=200, help="Concurrency level (default: 200)")
+    p.add_argument("--timeout", type=float, default=5.0, help="Timeout seconds (default: 5)")
+    p.add_argument("--no-json", action="store_true", help="Do not write JSON output")
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    console = Console()
+    console.print(f"[bold]Scanning[/] {args.domain}...")
+    report = scan_domain(
+        domain=args.domain,
+        outdir=args.outdir,
+        ports=args.ports,
+        ports_list=args.ports_list,
+        wordlist=args.wordlist,
+        concurrency=args.max_workers,
+        timeout=args.timeout,
+        write_json=not args.no_json,
+    )
+    console.print(f"Report written to: [green]{report}[/]")
+
+
+if __name__ == "__main__":
+    main()
