@@ -36,27 +36,30 @@ def main() -> None:
  """
     console.print(banner, style="cyan")
     if args.anon and args.active:
-        console.print("[yellow]--anon enabled: disabling --active (active probing is not supported over Tor).[/]")
-        args.active = False
+        console.print("[yellow]--anon + --active: active probing will run over Tor.[/]")
     mode = "ANON" if args.anon else ("ACTIVE" if args.active else "PASSIVE")
     console.print(f"[bold]EnumTool[/] starting {mode} scan for [yellow]{args.domain}[/]\n")
 
     def progress(msg: str) -> None:
         console.print(f"[cyan]»[/] {msg}")
-    report = scan_domain(
-        domain=args.domain,
-        outdir=args.outdir,
-        ports=args.ports,
-        ports_list=args.ports_list,
-        wordlist=args.wordlist,
-        concurrency=args.max_workers,
-        timeout=args.timeout,
-        write_json=not args.no_json,
-        active=args.active,
-    bruteforce=args.bruteforce,
-    progress=progress,
-    anon=args.anon,
-    )
+    try:
+        report = scan_domain(
+            domain=args.domain,
+            outdir=args.outdir,
+            ports=args.ports,
+            ports_list=args.ports_list,
+            wordlist=args.wordlist,
+            concurrency=args.max_workers,
+            timeout=args.timeout,
+            write_json=not args.no_json,
+            active=args.active,
+            bruteforce=args.bruteforce,
+            progress=progress,
+            anon=args.anon,
+        )
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/] {e}")
+        raise SystemExit(2)
     console.print(f"Report written to: [green]{report}[/]")
 
 

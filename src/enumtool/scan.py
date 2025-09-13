@@ -107,10 +107,10 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
             host, port = tor.start(progress)
             socks_url = f"socks5://{host}:{port}"
         except Exception as e:
+            # Fail hard in anon mode
             if progress:
                 progress(f"[warning] Could not start Tor: {e}")
-            # Continue without Tor
-            anon = False
+            raise RuntimeError("--anon requested but Tor is not available/running. Install Tor or set TOR_EXE.")
     shodan = ShodanClient(settings.shodan_api_key, proxies={"http": socks_url, "https": socks_url} if socks_url else None)
 
     # Subdomains via DNS hints, crt.sh, ThreatCrowd, and Shodan
@@ -118,21 +118,16 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
         progress("Gathering passive subdomain hints (DNS TXT/MX/NS/CNAME)…")
     # Shared HTTP client (optionally over Tor)
     http_client = None
-    try:
-        if socks_url:
-            import httpx
-            proxies = {"http://": socks_url, "https://": socks_url}
-            http_client = httpx.AsyncClient(timeout=10.0, proxies=proxies)
-        hints = await passive_hints(domain, anon=anon, client=http_client)  # DNS hints respect anon mode
-        if progress:
-            progress("Querying crt.sh and ThreatCrowd for CT and community data…")
-        crt = await from_crtsh(domain, client=http_client) if http_client else await from_crtsh(domain)
-        tc = await from_threatcrowd(domain, client=http_client) if http_client else await from_threatcrowd(domain)
-    finally:
-        if http_client:
-            await http_client.aclose()
-        if tor:
-            tor.stop()
+    if socks_url:
+        import httpx  # type: ignore[import]
+        proxies = {"http://": socks_url, "https://": socks_url}
+        http_client = httpx.AsyncClient(timeout=10.0, proxies=proxies)
+    # Passive OSINT collection
+    hints = await passive_hints(domain, anon=anon, client=http_client)  # DNS hints respect anon mode
+    if progress:
+        progress("Querying crt.sh and ThreatCrowd for CT and community data…")
+    crt = await from_crtsh(domain, client=http_client) if http_client else await from_crtsh(domain)
+    tc = await from_threatcrowd(domain, client=http_client) if http_client else await from_threatcrowd(domain)
     shodan_subs, shodan_records = ([], {})
     if shodan.enabled():
         if progress:
@@ -161,14 +156,25 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
     await asyncio.gather(*(_enrich_with_shodan(sf, shodan) for sf in subfindings))
 
     # Optionally perform active scan if enabled by user flag
-    if active_scan and not anon:
+    if active_scan:
         if progress:
             progress("Active scan enabled: probing TCP ports and HTTP services…")
         from .ports import scan_ports  # lazy import to avoid accidental usage otherwise
         from .http_fingerprint import fingerprint_http  # lazy import
         chosen_ports = _choose_ports(ports_preset, ports_list)
         async def _active(sf: SubdomainFinding):
-            port_states = await scan_ports(sf.name, chosen_ports, concurrency=concurrency, timeout=timeout)
+            socks_tuple = None
+            if socks_url:
+                # parse socks5://host:port -> (host, port)
+                try:
+                    host_port = socks_url.split("://",1)[1]
+                    host, port_s = host_port.split(":")
+                    socks_tuple = (host, int(port_s))
+                except Exception:
+                    socks_tuple = None
+            if progress:
+                progress(f"[dim]  → {sf.name}: scanning {len(chosen_ports)} TCP ports…[/]")
+            port_states = await scan_ports(sf.name, chosen_ports, concurrency=concurrency, timeout=timeout, socks_proxy=socks_tuple)
             # Merge: preserve OSINT-found open ports, add newly open ones
             known = {p.port for p in sf.ports if p.open}
             for p, state in port_states:
@@ -187,7 +193,10 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
                 key = f"{p}/{ 'https' if ssl else 'http'}"
                 if key in sf.http:
                     return
-                data = await fingerprint_http(sf.name, p, ssl, timeout=timeout)
+                if progress:
+                    scheme = 'https' if ssl else 'http'
+                    progress(f"[dim]  → {sf.name}: fingerprinting {scheme} on port {p}…[/]")
+                data = await fingerprint_http(sf.name, p, ssl, timeout=timeout, client=http_client)
                 if data:
                     sf.http[key] = HTTPInfo(
                         url=data.get("url", f"http://{sf.name}:{p}"),
@@ -198,9 +207,15 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
                         tech=[t.strip() for t in (data.get("tech") or "").split(",") if t.strip()],
                     )
             await asyncio.gather(*(do_fp(p, ssl) for p, ssl in targets))
-    # Run active tasks for all subdomains (only when active_scan)
-    if active_scan and not anon:
+    # Run active tasks for all subdomains when active_scan is requested (including anon via Tor)
+    if active_scan:
         await asyncio.gather(*(_active(sf) for sf in subfindings))
+
+    # Cleanup after all network work is complete
+    if http_client:
+        await http_client.aclose()
+    if tor:
+        tor.stop()
 
     return ScanResult(domain=domain, whois=whois_info, records=apex_records, subdomains=subfindings)
 

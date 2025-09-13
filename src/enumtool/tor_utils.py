@@ -27,13 +27,21 @@ def _locate_tor_exe() -> Optional[str]:
         return path_exec
     # Common Tor paths (Windows, Linux, macOS)
     candidates = [
-        # Windows Tor Browser
+        # Windows Tor Expert Bundle and common installs
+        r"C:\\Program Files\\tor\\tor.exe",
+        r"C:\\Program Files\\Tor\\tor.exe",
+        r"C:\\Program Files\\Tor Expert Bundle\\tor.exe",
+        r"C:\\ProgramData\\chocolatey\\bin\\tor.exe",
+        # Windows Tor Browser (fallback)
         r"C:\\Program Files\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe",
         r"C:\\Program Files (x86)\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe",
         r"C:\\Users\\%USERNAME%\\AppData\\Local\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe",
+    r"C:\\Users\\%USERNAME%\\Desktop\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe",
         # Linux (daemon)
         "/usr/bin/tor",
         "/usr/local/bin/tor",
+        "/usr/sbin/tor",
+        "/snap/bin/tor",
         # macOS via Homebrew
         "/opt/homebrew/bin/tor",
         "/usr/local/bin/tor",
@@ -64,17 +72,18 @@ class TorManager:
         if progress:
             progress(f"Starting Tor (SOCKS {self.socks_port})…")
         # Launch Tor and wait for bootstrap
-        self.process = launch_tor_with_config(
-            tor_cmd=exe,
-            config={
-                "SocksPort": str(self.socks_port),
-                "ControlPort": str(self.control_port),
-                "DataDirectory": str(self.data_dir),
-                # Keep minimal
-                "DNSPort": "0",
-            },
-            timeout=timeout,
-        )
+        config = {
+            "SocksPort": str(self.socks_port),
+            "ControlPort": str(self.control_port),
+            "DataDirectory": str(self.data_dir),
+            # Keep minimal
+            "DNSPort": "0",
+        }
+        if os.name == "nt":
+            # Stem cannot use timeout on Windows
+            self.process = launch_tor_with_config(tor_cmd=exe, config=config)
+        else:
+            self.process = launch_tor_with_config(tor_cmd=exe, config=config, timeout=timeout)
         return ("127.0.0.1", self.socks_port)
 
     def stop(self) -> None:

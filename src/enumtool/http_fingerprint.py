@@ -7,23 +7,30 @@ import httpx
 from bs4 import BeautifulSoup
 
 
-async def fetch(url: str, timeout: float = 5.0) -> Optional[httpx.Response]:
+async def fetch(url: str, timeout: float = 5.0, client: Optional[httpx.AsyncClient] = None) -> Optional[httpx.Response]:
     try:
-        async with httpx.AsyncClient(http2=True, follow_redirects=True, timeout=timeout, headers={
-            "User-Agent": "EnumTool/1.0"
-        }) as client:
+        if client is None:
+            async with httpx.AsyncClient(http2=True, follow_redirects=True, timeout=timeout, headers={
+                "User-Agent": "EnumTool/1.0"
+            }) as ac:
+                resp = await ac.get(url)
+                return resp
+        else:
             resp = await client.get(url)
             return resp
     except Exception:
         return None
 
 
-async def favicon_hash(url: str, timeout: float = 5.0) -> Optional[str]:
+async def favicon_hash(url: str, timeout: float = 5.0, client: Optional[httpx.AsyncClient] = None) -> Optional[str]:
     # naive: try /favicon.ico
     base = url.rstrip("/")
     fav_url = base + "/favicon.ico"
     try:
-        async with httpx.AsyncClient(http2=True, follow_redirects=True, timeout=timeout) as client:
+        if client is None:
+            async with httpx.AsyncClient(http2=True, follow_redirects=True, timeout=timeout) as ac:
+                r = await ac.get(fav_url)
+        else:
             r = await client.get(fav_url)
             if r.status_code == 200 and r.content:
                 return hashlib.sha1(r.content).hexdigest()
@@ -67,16 +74,16 @@ def tech_hints_from_html(html: str) -> List[str]:
     return hints
 
 
-async def fingerprint_http(host: str, port: int, ssl: bool, timeout: float = 5.0) -> Dict[str, Optional[str]]:
+async def fingerprint_http(host: str, port: int, ssl: bool, timeout: float = 5.0, client: Optional[httpx.AsyncClient] = None) -> Dict[str, Optional[str]]:
     scheme = "https" if ssl else "http"
     url = f"{scheme}://{host}:{port}"
-    resp = await fetch(url, timeout=timeout)
+    resp = await fetch(url, timeout=timeout, client=client)
     if not resp:
         return {"url": url}
     hints = tech_hints_from_headers(resp.headers)
     body = resp.text if resp.content else ""
     hints += tech_hints_from_html(body)
-    fav = await favicon_hash(url, timeout=timeout)
+    fav = await favicon_hash(url, timeout=timeout, client=client)
     title = None
     try:
         soup = BeautifulSoup(body, "html.parser")
