@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from rich.console import Console
+from . import __version__
 
 from .scan import scan_domain, scan_ip
 
@@ -20,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-workers", type=int, default=200, help="Concurrency level (default: 200)")
     p.add_argument("--timeout", type=float, default=5.0, help="Timeout seconds (default: 5)")
     p.add_argument("--active", action="store_true", help="Enable active probing (TCP connect/HTTP). Default is passive OSINT only.")
-    p.add_argument("--anon", action="store_true", help="Route requests via Tor (SOCKS5 127.0.0.1:9050) and use DoH; disables WHOIS and active probing.")
+    p.add_argument("--anon", action="store_true", help="Route requests via Tor and use DoH; disables WHOIS; active probing, if enabled, runs over Tor.")
     p.add_argument("--no-json", action="store_true", help="Do not write JSON output")
     return p.parse_args()
 
@@ -35,9 +36,10 @@ def main() -> None:
  | _|| ' \ || | '  \| |/ _ \/ _ \ |
  |___|_||_\_,_|_|_|_|_|\___/\___/_|
    Domain and IP enumeration tool
- v1.0 by Timothy Wilson (@khemistmk)
+ v1.1 by Timothy Wilson (@khemistmk)
  """
     console.print(banner, style="cyan")
+    console.print(f"[dim]Version {__version__}[/]")
     if args.anon and args.active:
         console.print("[yellow]--anon + --active: active probing will run over Tor.[/]")
     mode = "ANON" if args.anon else ("ACTIVE" if args.active else "PASSIVE")
