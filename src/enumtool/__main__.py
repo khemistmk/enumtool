@@ -5,14 +5,15 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .scan import scan_domain
+from .scan import scan_domain, scan_ip
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="EnumTool - domain enumeration and fingerprinting")
-    p.add_argument("domain", help="Target domain, e.g. example.com")
+    p.add_argument("target", help="Target domain (default) or IP when used with --ip")
+    p.add_argument("--ip", dest="is_ip", action="store_true", help="Interpret target as an IP address and run IP-centric scan")
     p.add_argument("-o", "--outdir", type=Path, help="Output directory (default: reports/<domain>-<timestamp>)")
-    p.add_argument("--ports", choices=["web", "top100", "full-small"], help="Port preset (used only with --active)")
+    p.add_argument("--ports", choices=["web", "top100", "full-small", "tcp", "udp", "all"], help="Port preset (used only with --active). Use 'tcp' for all TCP ports, 'udp' for all UDP ports, or 'all' for both (very slow)")
     p.add_argument("--ports-list", help="Explicit comma-separated ports (overrides preset; used only with --active)")
     p.add_argument("--wordlist", type=Path, help="Subdomain wordlist path")
     p.add_argument("--bruteforce", action="store_true", help="Enable DNS bruteforce of top ~1000 common subdomains (passive sources are used regardless)")
@@ -33,18 +34,35 @@ def main() -> None:
  | __|_ _ _  _ _ _|_   _|__  ___| |
  | _|| ' \ || | '  \| |/ _ \/ _ \ |
  |___|_||_\_,_|_|_|_|_|\___/\___/_|
+   Domain and IP enumeration tool
+ v1.0 by Timothy Wilson (@khemistmk)
  """
     console.print(banner, style="cyan")
     if args.anon and args.active:
         console.print("[yellow]--anon + --active: active probing will run over Tor.[/]")
     mode = "ANON" if args.anon else ("ACTIVE" if args.active else "PASSIVE")
-    console.print(f"[bold]EnumTool[/] starting {mode} scan for [yellow]{args.domain}[/]\n")
+    target_label = args.target
+    console.print(f"[bold]EnumTool[/] starting {mode} {'IP' if args.is_ip else 'scan'} for [yellow]{target_label}[/]\n")
 
     def progress(msg: str) -> None:
         console.print(f"[cyan]»[/] {msg}")
     try:
-        report = scan_domain(
-            domain=args.domain,
+        if args.is_ip:
+            report = scan_ip(
+                ip=args.target,
+                outdir=args.outdir,
+                ports=args.ports,
+                ports_list=args.ports_list,
+                concurrency=args.max_workers,
+                timeout=args.timeout,
+                write_json=not args.no_json,
+                active=args.active,
+                progress=progress,
+                anon=args.anon,
+            )
+        else:
+            report = scan_domain(
+            domain=args.target,
             outdir=args.outdir,
             ports=args.ports,
             ports_list=args.ports_list,
@@ -56,7 +74,7 @@ def main() -> None:
             bruteforce=args.bruteforce,
             progress=progress,
             anon=args.anon,
-        )
+            )
     except RuntimeError as e:
         console.print(f"[red]Error:[/] {e}")
         raise SystemExit(2)

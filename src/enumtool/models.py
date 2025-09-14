@@ -22,6 +22,7 @@ class PortInfo:
     service: Optional[str] = None
     banner: Optional[str] = None
     tls: Optional[bool] = None
+    protocol: Optional[str] = None  # 'tcp' or 'udp'
 
 
 @dataclass

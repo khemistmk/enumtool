@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from typing import List, Tuple, Optional
+import ipaddress
+import dns.reversename
 
 import dns.asyncresolver
 import dns.resolver
@@ -75,3 +77,51 @@ async def enumerate_dns_doh(name: str, client: Optional[httpx.AsyncClient] = Non
     if close_client:
         await client.aclose()
     return a, aaaa, cname, txt, mx, ns, srv
+
+
+async def ptr_lookup(ip: str, *, anon: bool = False, client: Optional[httpx.AsyncClient] = None) -> List[str]:
+    """Reverse DNS (PTR) lookup to map IP -> hostnames. If anon, use DoH; else standard DNS.
+    Returns a list of PTR names (FQDNs without trailing dot).
+    """
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return []
+    try:
+        rev = dns.reversename.from_address(ip)
+        name = str(rev).rstrip('.')
+    except Exception:
+        return []
+    if not anon:
+        try:
+            resolver = build_resolver()
+            ans = await _query(resolver, name, "PTR")
+            return [n.rstrip('.') for n in ans]
+        except Exception:
+            return []
+    # DoH path
+    url = "https://cloudflare-dns.com/dns-query"
+    headers = {"accept": "application/dns-json"}
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=5.0)
+        close_client = True
+    try:
+        r = await client.get(url, params={"name": name, "type": "PTR"}, headers=headers)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        ans = data.get("Answer") or []
+        out: List[str] = []
+        for rr in ans:
+            if not isinstance(rr, dict):
+                continue
+            d = rr.get("data")
+            if isinstance(d, str):
+                out.append(d.rstrip('.'))
+        return out
+    except Exception:
+        return []
+    finally:
+        if close_client:
+            await client.aclose()
