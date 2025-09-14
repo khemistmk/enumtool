@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable, List, Tuple, Optional
+from typing import Iterable, List, Tuple, Optional, Callable
 import socket
 import asyncio
+import contextlib
 try:
     import socks  # PySocks
 except Exception:  # pragma: no cover
@@ -44,16 +45,44 @@ async def check_port(host: str, port: int, timeout: float = 3.0, socks_proxy: Op
         return False
 
 
-async def scan_ports(host: str, ports: Iterable[int], concurrency: int = 200, timeout: float = 3.0, socks_proxy: Optional[Tuple[str, int]] = None) -> List[Tuple[int, bool]]:
+async def scan_ports(host: str, ports: Iterable[int], concurrency: int = 200, timeout: float = 3.0, socks_proxy: Optional[Tuple[str, int]] = None, progress_cb: Optional[Callable[[int, int], None]] = None, progress_interval: float = 30.0) -> List[Tuple[int, bool]]:
     sem = asyncio.Semaphore(concurrency)
+    port_list = list(ports)
+    total = len(port_list)
+    scanned = 0
+    lock = asyncio.Lock()
+    done = asyncio.Event()
     results: List[Tuple[int, bool]] = []
 
+    async def ticker():
+        if not progress_cb or total == 0:
+            return
+        while True:
+            try:
+                await asyncio.wait_for(done.wait(), timeout=progress_interval)
+                return
+            except asyncio.TimeoutError:
+                # Periodic report
+                progress_cb(scanned, total)
+
     async def worker(p: int):
+        nonlocal scanned
         async with sem:
             open_ = await check_port(host, p, timeout=timeout, socks_proxy=socks_proxy)
             results.append((p, open_))
+            async with lock:
+                scanned += 1
 
-    await asyncio.gather(*(worker(p) for p in ports))
+    t_task = asyncio.create_task(ticker())
+    try:
+        await asyncio.gather(*(worker(p) for p in port_list))
+    finally:
+        done.set()
+        with contextlib.suppress(Exception):
+            await t_task
+    # Final report
+    if progress_cb and total:
+        progress_cb(scanned, total)
     return sorted(results)
 
 
@@ -92,14 +121,40 @@ async def check_udp_port(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
-async def scan_udp_ports(host: str, ports: Iterable[int], concurrency: int = 200, timeout: float = 1.0) -> List[Tuple[int, bool]]:
+async def scan_udp_ports(host: str, ports: Iterable[int], concurrency: int = 200, timeout: float = 1.0, progress_cb: Optional[Callable[[int, int], None]] = None, progress_interval: float = 30.0) -> List[Tuple[int, bool]]:
     sem = asyncio.Semaphore(concurrency)
+    port_list = list(ports)
+    total = len(port_list)
+    scanned = 0
+    lock = asyncio.Lock()
+    done = asyncio.Event()
     results: List[Tuple[int, bool]] = []
 
+    async def ticker():
+        if not progress_cb or total == 0:
+            return
+        while True:
+            try:
+                await asyncio.wait_for(done.wait(), timeout=progress_interval)
+                return
+            except asyncio.TimeoutError:
+                progress_cb(scanned, total)
+
     async def worker(p: int):
+        nonlocal scanned
         async with sem:
             open_ = await check_udp_port(host, p, timeout=timeout)
             results.append((p, open_))
+            async with lock:
+                scanned += 1
 
-    await asyncio.gather(*(worker(p) for p in ports))
+    t_task = asyncio.create_task(ticker())
+    try:
+        await asyncio.gather(*(worker(p) for p in port_list))
+    finally:
+        done.set()
+        with contextlib.suppress(Exception):
+            await t_task
+    if progress_cb and total:
+        progress_cb(scanned, total)
     return sorted(results)

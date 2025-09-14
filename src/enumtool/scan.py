@@ -211,7 +211,10 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
             if tcp_ports:
                 if progress:
                     progress(f"[dim]  → {sf.name}: scanning {len(tcp_ports)} TCP ports…[/]")
-                port_states = await scan_ports(sf.name, tcp_ports, concurrency=concurrency, timeout=timeout, socks_proxy=socks_tuple)
+                def _tcp_prog(done: int, total: int) -> None:
+                    if progress:
+                        progress(f"[dim]     {sf.name}: {done}/{total} TCP ports scanned…[/]")
+                port_states = await scan_ports(sf.name, tcp_ports, concurrency=concurrency, timeout=timeout, socks_proxy=socks_tuple, progress_cb=_tcp_prog, progress_interval=30.0)
             else:
                 port_states = []
             # UDP cannot be proxied over Tor; skip in anon mode
@@ -223,7 +226,10 @@ async def run_scan(domain: str, outdir: Path, ports_preset: Optional[str], ports
                 else:
                     if progress:
                         progress(f"[dim]  → {sf.name}: scanning {len(udp_ports)} UDP ports…[/]")
-                    udp_states = await scan_udp_ports(sf.name, udp_ports, concurrency=concurrency, timeout=max(1.0, timeout/2))
+                    def _udp_prog(done: int, total: int) -> None:
+                        if progress:
+                            progress(f"[dim]     {sf.name}: {done}/{total} UDP ports scanned…[/]")
+                    udp_states = await scan_udp_ports(sf.name, udp_ports, concurrency=concurrency, timeout=max(1.0, timeout/2), progress_cb=_udp_prog, progress_interval=30.0)
             # Merge: preserve OSINT-found open ports, add newly open ones
             known = {p.port for p in sf.ports if p.open}
             for p, state in port_states:
@@ -360,7 +366,10 @@ async def run_scan_ip(ip: str, outdir: Path, ports_preset: Optional[str], ports_
                 if tcp_ports:
                     if progress:
                         progress(f"[dim]  → {sf.name}: scanning {len(tcp_ports)} TCP ports…[/]")
-                    results = await scan_ports(ip, tcp_ports, concurrency=concurrency, timeout=timeout, socks_proxy=socks_tuple)
+                    def _tcp_prog(done: int, total: int) -> None:
+                        if progress:
+                            progress(f"[dim]     {sf.name}: {done}/{total} TCP ports scanned…[/]")
+                    results = await scan_ports(ip, tcp_ports, concurrency=concurrency, timeout=timeout, socks_proxy=socks_tuple, progress_cb=_tcp_prog, progress_interval=30.0)
                 else:
                     results = []
                 # UDP in anon mode is skipped
@@ -372,7 +381,10 @@ async def run_scan_ip(ip: str, outdir: Path, ports_preset: Optional[str], ports_
                     else:
                         if progress:
                             progress(f"[dim]  → {sf.name}: scanning {len(udp_ports)} UDP ports…[/]")
-                        udp_results = await scan_udp_ports(ip, udp_ports, concurrency=concurrency, timeout=max(1.0, timeout/2))
+                        def _udp_prog(done: int, total: int) -> None:
+                            if progress:
+                                progress(f"[dim]     {sf.name}: {done}/{total} UDP ports scanned…[/]")
+                        udp_results = await scan_udp_ports(ip, udp_ports, concurrency=concurrency, timeout=max(1.0, timeout/2), progress_cb=_udp_prog, progress_interval=30.0)
                 known = {p.port for p in sf.ports if p.open}
                 for p, state in results:
                     if state and p not in known:
