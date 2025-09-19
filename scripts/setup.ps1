@@ -27,7 +27,7 @@ function Ensure-Python {
         }
     }
     try {
-        python --version
+                python --version
     } catch { }
     # Ensure pip and upgrade it
     try { python -m ensurepip --upgrade } catch { }
